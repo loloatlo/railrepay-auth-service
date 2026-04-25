@@ -1,0 +1,14 @@
+{
+  "database-url": {
+    "env": "DATABASE_URL"
+  },
+  "migrations-dir": "dist/migrations",
+  "migrations-table": "pgmigrations",
+  "migrations-schema": "user_identity",
+  "schema": "user_identity",
+  "create-schema": true,
+  "create-migrations-schema": true,
+  "check-order": true,
+  "run-in-transaction": true,
+  "migration-file-language": "js"
+}

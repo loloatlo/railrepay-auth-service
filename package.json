@@ -1,0 +1,44 @@
+{
+  "name": "@railrepay/auth-service",
+  "version": "0.1.0",
+  "description": "Authentication service owning the user_identity schema (users, channel_identities). Application code in BL-201.",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build:migrations": "tsc -p tsconfig.migrations.json && node scripts/rename-migrations.js",
+    "migrate:up": "node-pg-migrate up --migrations-dir dist/migrations --migrations-schema user_identity --create-migrations-schema",
+    "migrate:down": "node-pg-migrate down --migrations-dir dist/migrations --migrations-schema user_identity",
+    "migrate:up:dev": "node-pg-migrate up -f .migrationrc.json",
+    "migrate:down:dev": "node-pg-migrate down -f .migrationrc.json",
+    "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:integration": "vitest run tests/integration"
+  },
+  "keywords": [
+    "auth",
+    "identity",
+    "railrepay"
+  ],
+  "author": "RailRepay",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@railrepay/metrics-pusher": "^1.1.0",
+    "@railrepay/postgres-client": "^1.0.0",
+    "@railrepay/winston-logger": "^1.0.0",
+    "dotenv": "^16.3.1",
+    "node-pg-migrate": "^6.2.2",
+    "pg": "^8.11.3"
+  },
+  "devDependencies": {
+    "@testcontainers/postgresql": "^10.4.0",
+    "@types/node": "^20.10.6",
+    "@types/pg": "^8.10.9",
+    "@vitest/coverage-v8": "^1.6.1",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3",
+    "vitest": "^1.1.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
