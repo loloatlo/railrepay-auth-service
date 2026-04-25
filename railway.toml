@@ -1,0 +1,23 @@
+# Railway Deployment Configuration
+# Service: auth-service
+# ADR Compliance: ADR-005 (Railway native rollback), ADR-008 (health checks)
+
+[build]
+# Use Dockerfile for explicit build control and multi-stage optimisation
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# Dockerfile CMD handles migrations + server start:
+#   sh -c "npm run migrate:up && node dist/index.js"
+# Health check endpoint per ADR-008
+healthcheckPath = "/health"
+# Allow 100s for startup (database connection, migrations, config loading)
+healthcheckTimeout = 100
+# Restart policy for transient failures
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 10
+
+[service]
+# Internal port for Railway service mesh
+internalPort = 3000

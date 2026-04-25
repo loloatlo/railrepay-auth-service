@@ -5,7 +5,9 @@
   "main": "dist/index.js",
   "type": "module",
   "scripts": {
+    "build": "tsc -p tsconfig.json",
     "build:migrations": "tsc -p tsconfig.migrations.json && node scripts/rename-migrations.js",
+    "build:all": "npm run build && npm run build:migrations",
     "migrate:up": "node-pg-migrate up --migrations-dir dist/migrations --migrations-schema user_identity --create-migrations-schema",
     "migrate:down": "node-pg-migrate down --migrations-dir dist/migrations --migrations-schema user_identity",
     "migrate:up:dev": "node-pg-migrate up -f .migrationrc.json",

@@ -1,6 +1,18 @@
 import { defineConfig } from 'vitest/config';
+import path from 'path';
 
 export default defineConfig({
+  resolve: {
+    alias: [
+      // Allow tests/integration/health/ to import ../../src/app.js
+      // (off-by-one relative path in test — resolves to tests/src/app.js
+      // without this alias, but the test intent is src/app.ts)
+      {
+        find: /^\.\.\/\.\.\/src\//,
+        replacement: path.resolve(__dirname, 'src') + '/',
+      },
+    ],
+  },
   test: {
     globals: true,
     environment: 'node',
