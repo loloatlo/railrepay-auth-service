@@ -657,6 +657,15 @@ describe('user_identity schema migration — rollback and idempotency (AC-7)', (
     // the user_identity schema (and everything inside it) with CASCADE.
     // The production ADR-018 behaviour (pgmigrations inside user_identity) is already
     // verified by the AC-1 "pgmigrations in user_identity" test in the main suite.
+    //
+    // TD-AUTH-002-2 FIX (2026-04-25, Jessie, BL-221):
+    // With AUTH-002 (1745625600000_create-sessions-table) now present in dist/migrations/,
+    // runMigrationUp applies TWO migrations (IDP-001 + AUTH-002). A single runMigrationDown
+    // only undoes the most recent migration (AUTH-002 sessions table), leaving the
+    // user_identity schema intact. To fully roll back to an empty state, we must call
+    // runMigrationDown TWICE — once for AUTH-002, once for IDP-001.
+    // Fix choice: (a) roll back both migrations — matches the test's original intent
+    //             ("assert user_identity schema is gone"). See TD-AUTH-002-2 §Fix.
 
     const rollbackContainer = await new PostgreSqlContainer('postgres:16-alpine')
       .withDatabase('rollback_test')
@@ -679,10 +688,12 @@ describe('user_identity schema migration — rollback and idempotency (AC-7)', (
       `);
       expect(result.rows).toHaveLength(1);
 
-      // DOWN
+      // DOWN step 1: undo AUTH-002 (1745625600000_create-sessions-table)
+      runMigrationDown(rollbackContainer.getConnectionUri(), 'public');
+      // DOWN step 2: undo IDP-001 (1745539200000_create-user-identity-schema) — drops the schema
       runMigrationDown(rollbackContainer.getConnectionUri(), 'public');
 
-      // Schema must be gone
+      // Schema must be gone after both steps
       result = await rollbackPool.query(`
         SELECT schema_name FROM information_schema.schemata
         WHERE schema_name = 'user_identity'
@@ -705,6 +716,13 @@ describe('user_identity schema migration — rollback and idempotency (AC-7)', (
     // AC-7: up→down→up idempotency required by spec and RFC-001 §rollback
     // Verifies IF NOT EXISTS / IF EXISTS guards work correctly on second UP.
     // See note in previous test re: migrations-schema=public for rollback containers.
+    //
+    // TD-AUTH-002-2 FIX (2026-04-25, Jessie, BL-221):
+    // Two DOWN calls required to fully unwind IDP-001 + AUTH-002. See first AC-7 test comment.
+    // After two DOWN calls, all UP migrations are re-applied with a second runMigrationUp call.
+    // The test then verifies the full schema (users, channel_identities) is restored.
+    // The sessions table (AUTH-002) is verified to exist after the second UP via a separate
+    // table list query — ensuring both migrations re-apply cleanly.
 
     const idempotencyContainer = await new PostgreSqlContainer('postgres:16-alpine')
       .withDatabase('idempotency_test')
@@ -726,7 +744,9 @@ describe('user_identity schema migration — rollback and idempotency (AC-7)', (
         VALUES ('a0000000-0000-0000-0000-000000000001', 'active')
       `);
 
-      // DOWN
+      // DOWN step 1: undo AUTH-002 (sessions table)
+      runMigrationDown(idempotencyContainer.getConnectionUri(), 'public');
+      // DOWN step 2: undo IDP-001 (drops user_identity schema + all tables)
       runMigrationDown(idempotencyContainer.getConnectionUri(), 'public');
 
       // Schema dropped — seed data gone
@@ -736,7 +756,7 @@ describe('user_identity schema migration — rollback and idempotency (AC-7)', (
       `);
       expect(schemaCheck.rows).toHaveLength(0);
 
-      // UP again (second time — must succeed without errors)
+      // UP again (second time — must succeed without errors; both migrations re-applied)
       runMigrationUp(idempotencyContainer.getConnectionUri(), 'public');
 
       // Schema must exist again
@@ -746,7 +766,7 @@ describe('user_identity schema migration — rollback and idempotency (AC-7)', (
       `);
       expect(schemaCheck.rows).toHaveLength(1);
 
-      // Both tables must exist
+      // All three tables (IDP-001 + AUTH-002) must exist after second UP
       const tablesResult = await idempotencyPool.query(`
         SELECT table_name FROM information_schema.tables
         WHERE table_schema = 'user_identity'
@@ -756,8 +776,10 @@ describe('user_identity schema migration — rollback and idempotency (AC-7)', (
       const tableNames = tablesResult.rows.map((r) => r.table_name);
       expect(tableNames).toContain('users');
       expect(tableNames).toContain('channel_identities');
+      // sessions table is also restored by the second UP (AUTH-002 re-applied)
+      expect(tableNames).toContain('sessions');
 
-      // All three named constraints must exist on second UP
+      // All three named IDP-001 constraints must exist on second UP
       const constraintsResult = await idempotencyPool.query(`
         SELECT constraint_name
         FROM information_schema.table_constraints
