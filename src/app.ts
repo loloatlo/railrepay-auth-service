@@ -8,6 +8,9 @@
  *   ADR-008 — Health check endpoint
  *   ADR-014 — TDD / testable app factory pattern
  *   CLAUDE.md §8 — Mandatory shared package usage
+ *
+ * AC-WIRE.1 (AUTH-002): SessionRepository is constructed here with the injected pool
+ *   and exposed via app.locals.sessionRepository for route handlers to consume.
  */
 
 import express, { type Express } from 'express';
@@ -15,6 +18,7 @@ import type { Pool } from 'pg';
 import { createHealthRouter } from './routes/health.js';
 import { createMetricsRouter } from './routes/metrics.js';
 import { getLogger } from './lib/logger.js';
+import { SessionRepository } from './repositories/session.repository.js';
 
 /**
  * Create and configure the auth-service Express application.
@@ -25,6 +29,9 @@ import { getLogger } from './lib/logger.js';
 export function createApp(pool: Pool): Express {
   const app = express();
   const logger = getLogger();
+
+  // AC-WIRE.1 (AUTH-002): wire SessionRepository on app.locals for route handlers
+  app.locals.sessionRepository = new SessionRepository(pool);
 
   // Trust proxy headers — required for Railway/proxy environments (ADR note)
   app.set('trust proxy', true);
