@@ -11,6 +11,11 @@
  *
  * AC-WIRE.1 (AUTH-002): SessionRepository is constructed here with the injected pool
  *   and exposed via app.locals.sessionRepository for route handlers to consume.
+ *
+ * AUTH-003: OTP routes added. TwilioVerifyService + IdentityService + OtpService are
+ *   constructed here when TWILIO_* env vars are available. If env vars are absent
+ *   (e.g. unit-test wiring assertions), OTP routes are not mounted. In production and
+ *   integration tests all vars are required (enforced by getConfig() at startServer time).
  */
 
 import express, { type Express } from 'express';
@@ -19,9 +24,19 @@ import { createHealthRouter } from './routes/health.js';
 import { createMetricsRouter } from './routes/metrics.js';
 import { getLogger } from './lib/logger.js';
 import { SessionRepository } from './repositories/session.repository.js';
+import { TwilioVerifyService } from './twilio/twilio-verify.service.js';
+import { IdentityService } from './services/identity.service.js';
+import { OtpService } from './services/otp.service.js';
+import { createOtpRouter } from './routes/otp.js';
 
 /**
  * Create and configure the auth-service Express application.
+ *
+ * Reads TWILIO_* directly from process.env (no getConfig() call) so that
+ * the wiring tests (which only set PORT/DATABASE_URL) can call createApp()
+ * without triggering a TWILIO validation failure. The OTP router is only
+ * mounted when all three TWILIO vars are present. In startServer() (index.ts),
+ * getConfig() is called first which enforces the throw-on-missing contract.
  *
  * @param pool - PostgreSQL connection pool (injected for testability)
  * @returns Configured Express application (not yet listening)
@@ -31,7 +46,8 @@ export function createApp(pool: Pool): Express {
   const logger = getLogger();
 
   // AC-WIRE.1 (AUTH-002): wire SessionRepository on app.locals for route handlers
-  app.locals.sessionRepository = new SessionRepository(pool);
+  const sessionRepository = new SessionRepository(pool as unknown as import('@railrepay/postgres-client').Pool);
+  app.locals.sessionRepository = sessionRepository;
 
   // Trust proxy headers — required for Railway/proxy environments (ADR note)
   app.set('trust proxy', true);
@@ -54,6 +70,25 @@ export function createApp(pool: Pool): Express {
 
   // Metrics route (ADR-006)
   app.use('/metrics', createMetricsRouter());
+
+  // AUTH-003: OTP routes — only mounted when TWILIO_* env vars are present.
+  // getConfig() (called in startServer) enforces the throw-on-missing contract
+  // for the full service startup path. createApp() reads them directly here so
+  // wiring/unit tests that don't set TWILIO vars can still call createApp().
+  const accountSid = process.env.TWILIO_ACCOUNT_SID ?? '';
+  const authToken = process.env.TWILIO_AUTH_TOKEN ?? '';
+  const verifyServiceSid = process.env.TWILIO_VERIFY_SERVICE_SID ?? '';
+
+  if (accountSid && authToken && verifyServiceSid) {
+    const twilioVerifyService = new TwilioVerifyService(accountSid, authToken, verifyServiceSid);
+    const identityService = new IdentityService(pool);
+    const otpService = new OtpService({
+      twilioVerifyService,
+      identityService,
+      sessionRepository,
+    });
+    app.use('/auth', createOtpRouter(otpService));
+  }
 
   return app;
 }
