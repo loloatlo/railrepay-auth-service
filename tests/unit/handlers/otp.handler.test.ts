@@ -1,9 +1,9 @@
 /**
  * Unit Tests: OTP route handlers (POST /auth/otp/start + POST /auth/otp/verify)
  *
- * Story   : RAILREPAY-AUTH-003
+ * Story   : RAILREPAY-AUTH-003 / extended for RAILREPAY-AUTH-004
  * Phase   : US-2 (Jessie — Test Specification, TDD per ADR-014)
- * Date    : 2026-04-25
+ * Date    : 2026-04-25 (extended 2026-04-26 for AUTH-004 AC-D1.1)
  *
  * Test Lock Rule (CLAUDE.md §6): Blake MUST NOT modify these tests.
  * If a test appears wrong, Blake hands back to Jessie with explanation.
@@ -11,6 +11,11 @@
  * These tests MUST FAIL until Blake creates:
  *   src/routes/otp.ts  (or equivalent — exports createOtpRouter(otpService))
  *   src/app.ts updated to mount the OTP router
+ *
+ * AUTH-004 extension (AC-D1.1):
+ *   POST /auth/otp/verify now ALSO returns access_token + expires_in: 900.
+ *   The existing AUTH-003 tests remain unchanged (additive extension).
+ *   The AC-2.2 "exact body" test has been updated to reflect the new response shape.
  *
  * Strategy: supertest + mocked OtpService. Tests verify HTTP contract only
  *   (status codes, response shapes, correlation-ID header propagation).
@@ -25,6 +30,7 @@
  *   AC-2.3  POST /auth/otp/verify 401 { error: 'invalid_code' } on wrong code
  *   AC-6.1  POST /auth/otp/start 429 { error: 'rate_limited', retry_after_seconds: <int> }
  *   AC-5.1  POST /auth/otp/verify 503 { error: 'upstream_unavailable' } on Twilio failure
+ *   AC-D1.1 (AUTH-004) POST /auth/otp/verify 200 body now includes access_token + expires_in: 900
  *
  * ADR references:
  *   ADR-002  — Structured logging with correlation IDs
@@ -83,6 +89,8 @@ function makeApp() {
 // Unique per test path to satisfy Guideline #6
 const USER_ID = 'f0000000-0000-4000-8000-000000000041';
 const SESSION_ID = 'f0000000-0000-4000-8000-000000000042';
+// AUTH-004: access_token added to verifyOtp response
+const ACCESS_TOKEN = 'eyJhbGciOiJIUzI1NiJ9.mock.signature';
 
 describe('RAILREPAY-AUTH-003: OTP route handlers (HTTP contract)', () => {
   let app: express.Express;
@@ -244,8 +252,13 @@ describe('RAILREPAY-AUTH-003: OTP route handlers (HTTP contract)', () => {
   describe('POST /auth/otp/verify', () => {
     describe('AC-2.2: success path (valid code)', () => {
       it('AC-2.2: should return 200 on approved verification', async () => {
-        // AC-2.2: "return 200 { user_id, session_id }"
-        mockVerifyOtp.mockResolvedValueOnce({ user_id: USER_ID, session_id: SESSION_ID });
+        // AC-2.2: "return 200 { user_id, session_id }" (AUTH-004: also includes access_token, expires_in)
+        mockVerifyOtp.mockResolvedValueOnce({
+          user_id:      USER_ID,
+          session_id:   SESSION_ID,
+          access_token: ACCESS_TOKEN,
+          expires_in:   900,
+        });
 
         const res = await request(app)
           .post('/auth/otp/verify')
@@ -254,20 +267,34 @@ describe('RAILREPAY-AUTH-003: OTP route handlers (HTTP contract)', () => {
         expect(res.status).toBe(200);
       });
 
-      it('AC-2.2: should return { user_id, session_id } in body', async () => {
-        // AC-2.2: exact response shape locked
-        mockVerifyOtp.mockResolvedValueOnce({ user_id: USER_ID, session_id: SESSION_ID });
+      it('AC-2.2 / AC-D1.1: should return { user_id, session_id, access_token, expires_in } in body', async () => {
+        // AC-2.2 (AUTH-003): user_id, session_id retained
+        // AC-D1.1 (AUTH-004): additive — access_token + expires_in: 900 now also returned
+        mockVerifyOtp.mockResolvedValueOnce({
+          user_id:      USER_ID,
+          session_id:   SESSION_ID,
+          access_token: ACCESS_TOKEN,
+          expires_in:   900,
+        });
 
         const res = await request(app)
           .post('/auth/otp/verify')
           .send({ channel: 'web', phone_e164: '+447700900091', code: '234567' });
 
-        expect(res.body).toEqual({ user_id: USER_ID, session_id: SESSION_ID });
+        expect(res.body.user_id).toBe(USER_ID);
+        expect(res.body.session_id).toBe(SESSION_ID);
+        expect(res.body.access_token).toBe(ACCESS_TOKEN);
+        expect(res.body.expires_in).toBe(900);
       });
 
       it('AC-2.2: should call OtpService.verifyOtp with channel, phone_e164, and code', async () => {
         // AC-2.1: handler passes all three fields to service
-        mockVerifyOtp.mockResolvedValueOnce({ user_id: USER_ID, session_id: SESSION_ID });
+        mockVerifyOtp.mockResolvedValueOnce({
+          user_id:      USER_ID,
+          session_id:   SESSION_ID,
+          access_token: ACCESS_TOKEN,
+          expires_in:   900,
+        });
 
         await request(app)
           .post('/auth/otp/verify')
@@ -342,6 +369,43 @@ describe('RAILREPAY-AUTH-003: OTP route handlers (HTTP contract)', () => {
 
         expect(res.status).toBe(400);
         expect(res.body.error).toBe('invalid_request');
+      });
+    });
+
+    // ─── AC-D1.1 (AUTH-004 extension) ─────────────────────────────────────────
+
+    describe('AC-D1.1 (AUTH-004): POST /auth/otp/verify response includes JWT fields', () => {
+      it('AC-D1.1: response body must include access_token when OtpService returns it', async () => {
+        // AC-D1.1: "access_token: <jwt>" — handler passes through the JWT from service
+        mockVerifyOtp.mockResolvedValueOnce({
+          user_id:      USER_ID,
+          session_id:   SESSION_ID,
+          access_token: ACCESS_TOKEN,
+          expires_in:   900,
+        });
+
+        const res = await request(app)
+          .post('/auth/otp/verify')
+          .send({ channel: 'web', phone_e164: '+447700900098', code: '111111' });
+
+        expect(res.status).toBe(200);
+        expect(res.body).toHaveProperty('access_token');
+      });
+
+      it('AC-D1.1: response body must include expires_in === 900 when OtpService returns it', async () => {
+        // AC-D1.1: "expires_in: 900"
+        mockVerifyOtp.mockResolvedValueOnce({
+          user_id:      USER_ID,
+          session_id:   SESSION_ID,
+          access_token: ACCESS_TOKEN,
+          expires_in:   900,
+        });
+
+        const res = await request(app)
+          .post('/auth/otp/verify')
+          .send({ channel: 'web', phone_e164: '+447700900099', code: '222222' });
+
+        expect(res.body.expires_in).toBe(900);
       });
     });
   });

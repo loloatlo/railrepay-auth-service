@@ -1,0 +1,39 @@
+{
+  "_fixtureMetadata": {
+    "source": "user_identity.sessions (schema shape)",
+    "query": "SELECT session_id, user_id, channel, issued_at, expires_at, revoked_at FROM user_identity.sessions LIMIT 1",
+    "sampledAt": "2026-04-26",
+    "description": "Fixture data for AUTH-004 sessions-flow integration tests. Covers JWT issuance, /auth/sessions/me, refresh, and revoke E2E sequence. Phone numbers are E.164 formatted unique per scenario (series 900300-900399). UUIDs are v4 format.",
+    "story": "RAILREPAY-AUTH-004",
+    "owner": "Jessie (ADR-017 fixture ownership)"
+  },
+  "scenarios": {
+    "jwt_issue_and_me": {
+      "description": "AC-D1.1 + AC-D2.1: Full OTP verify → JWT issued → /me returns 200",
+      "phone_e164": "+447700900300",
+      "channel": "web"
+    },
+    "me_revoked_session": {
+      "description": "AC-D2.5: Active session revoked in DB → /me returns 401 despite valid JWT sig",
+      "phone_e164": "+447700900301",
+      "channel": "web"
+    },
+    "refresh_flow": {
+      "description": "AC-D3.1 + AC-D3.2: Full OTP verify → /refresh → new JWT with same sid → /me still 200 → revoke → refresh 401",
+      "phone_e164": "+447700900302",
+      "channel": "web"
+    },
+    "revoke_flow": {
+      "description": "AC-D4.1 + AC-D4.2: Full OTP verify → /revoke → 204 → /me 401 → second /revoke → 204 again",
+      "phone_e164": "+447700900303",
+      "channel": "web"
+    }
+  },
+  "jwt_config": {
+    "secret": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "issuer": "auth-service",
+    "audience": "web-app-bff",
+    "ttl_ms": 900000,
+    "description": "Deterministic 32-byte hex secret for tests. NOT a production secret."
+  }
+}
