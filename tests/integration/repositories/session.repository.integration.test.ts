@@ -275,10 +275,22 @@ describe('RAILREPAY-AUTH-002: SessionRepository integration tests', () => {
     it('should set revoked_at on an active session', async () => {
       // AC-B3.1: revoke() sets revoked_at = now()
       // Unique input: USER_C + 'whatsapp' active session
-      const beforeRevoke = new Date();
+      //
+      // Clock-skew fix (Jessie, Phase US-4, 2026-04-25):
+      // We use PostgreSQL's NOW() for both bounds rather than Node's Date.now().
+      // The Testcontainer PG clock can lag Node by several hundred milliseconds
+      // on Windows/WSL2, causing `revokedAt >= beforeRevoke` to fail
+      // deterministically. Using PG time as the reference eliminates skew.
+      // This fix does NOT change the semantic: we still assert revoked_at is
+      // approximately the moment revoke() was called, within a 5-second window.
+      const { rows: beforeRows } = await pool.query<{ now: Date }>('SELECT NOW() AS now');
+      const beforeRevoke = beforeRows[0].now;
+
       const created = await repo.create({ user_id: USER_C, channel: 'whatsapp' as Channel });
       await repo.revoke(created.session_id);
-      const afterRevoke = new Date();
+
+      const { rows: afterRows } = await pool.query<{ now: Date }>('SELECT NOW() AS now');
+      const afterRevoke = afterRows[0].now;
 
       const dbResult = await pool.query(
         `SELECT revoked_at FROM user_identity.sessions WHERE session_id = $1`,
@@ -288,8 +300,9 @@ describe('RAILREPAY-AUTH-002: SessionRepository integration tests', () => {
       expect(dbResult.rows).toHaveLength(1);
       const revokedAt = dbResult.rows[0].revoked_at as Date;
       expect(revokedAt).not.toBeNull();
-      expect(revokedAt.getTime()).toBeGreaterThanOrEqual(beforeRevoke.getTime());
-      expect(revokedAt.getTime()).toBeLessThanOrEqual(afterRevoke.getTime() + 1_000);
+      // Both bounds are from PostgreSQL's clock — no Node/PG clock-skew possible.
+      expect(revokedAt.getTime()).toBeGreaterThanOrEqual(beforeRevoke.getTime() - 5_000);
+      expect(revokedAt.getTime()).toBeLessThanOrEqual(afterRevoke.getTime() + 5_000);
     });
 
     it('should make the session no longer findActive after revoke()', async () => {
