@@ -1,0 +1,52 @@
+{
+  "_fixtureMetadata": {
+    "source": "user_identity.channel_identities (schema shape)",
+    "query": "SELECT user_id, channel, channel_user_id, created_at, last_seen_at FROM user_identity.channel_identities LIMIT 3",
+    "sampledAt": "2026-04-25",
+    "description": "Fixture data for OTP integration tests. Uses Hoops RFC-002 schema shape. UUIDs are v4 format matching gen_random_uuid() output. Phone numbers are E.164 formatted, unique per scenario.",
+    "story": "RAILREPAY-AUTH-003",
+    "owner": "Jessie (ADR-017 fixture ownership)"
+  },
+  "scenarios": {
+    "new_user_web": {
+      "description": "AC-3.1: Brand new phone+channel — web channel first contact",
+      "phone_e164": "+447700900200",
+      "channel": "web",
+      "expected_user_status": "active"
+    },
+    "existing_user_whatsapp": {
+      "description": "AC-3.2: Pre-seeded whatsapp identity — verify reuses user_id",
+      "pre_seed": {
+        "user_id": "a1b2c3d4-0000-4000-8000-100000000001",
+        "user_status": "active",
+        "channel": "whatsapp",
+        "phone_e164": "+447700900201"
+      },
+      "request": {
+        "channel": "whatsapp",
+        "phone_e164": "+447700900201"
+      },
+      "expected_user_id": "a1b2c3d4-0000-4000-8000-100000000001"
+    },
+    "cross_channel_web_for_whatsapp_user": {
+      "description": "AC-4.1: Pre-seeded whatsapp identity — verify web channel reuses user_id and adds second channel_identity row",
+      "pre_seed": {
+        "user_id": "a1b2c3d4-0000-4000-8000-100000000002",
+        "user_status": "active",
+        "channel": "whatsapp",
+        "phone_e164": "+447700900202"
+      },
+      "request": {
+        "channel": "web",
+        "phone_e164": "+447700900202"
+      },
+      "expected_user_id": "a1b2c3d4-0000-4000-8000-100000000002",
+      "expected_channel_identity_count": 2
+    },
+    "rate_limit_test": {
+      "description": "AC-6.1: Unique phone for rate-limit integration test — avoids contaminating other scenarios",
+      "phone_e164": "+447700900203",
+      "channel": "web"
+    }
+  }
+}
