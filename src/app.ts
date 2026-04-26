@@ -16,6 +16,10 @@
  *   constructed here when TWILIO_* env vars are available. If env vars are absent
  *   (e.g. unit-test wiring assertions), OTP routes are not mounted. In production and
  *   integration tests all vars are required (enforced by getConfig() at startServer time).
+ *
+ * AUTH-004: Sessions routes added (me, refresh, revoke). JwtService constructed when
+ *   JWT_SECRET is set. Sessions router mounted when JWT_SECRET is present (mirrors
+ *   TWILIO_* conditional pattern from AUTH-003).
  */
 
 import express, { type Express } from 'express';
@@ -28,6 +32,8 @@ import { TwilioVerifyService } from './twilio/twilio-verify.service.js';
 import { IdentityService } from './services/identity.service.js';
 import { OtpService } from './services/otp.service.js';
 import { createOtpRouter } from './routes/otp.js';
+import { JwtService } from './jwt/jwt.service.js';
+import { createSessionsRouter } from './routes/sessions.js';
 
 /**
  * Create and configure the auth-service Express application.
@@ -71,6 +77,23 @@ export function createApp(pool: Pool): Express {
   // Metrics route (ADR-006)
   app.use('/metrics', createMetricsRouter());
 
+  // AUTH-004: Construct JwtService when JWT_SECRET is present.
+  // createApp() reads JWT_SECRET directly so wiring tests without JWT vars can
+  // still call createApp(). getConfig() (in startServer) enforces the throw-on-missing.
+  const jwtSecretRaw = process.env.JWT_SECRET ?? '';
+  let jwtService: JwtService | undefined;
+
+  if (jwtSecretRaw && jwtSecretRaw.length >= 32) {
+    jwtService = new JwtService({
+      secret:   jwtSecretRaw,
+      issuer:   process.env.JWT_ISSUER   ?? 'auth-service',
+      audience: process.env.JWT_AUDIENCE ?? 'web-app-bff',
+      ttlMs:    process.env.JWT_ACCESS_TTL_MS
+        ? parseInt(process.env.JWT_ACCESS_TTL_MS, 10)
+        : 900_000,
+    });
+  }
+
   // AUTH-003: OTP routes — only mounted when TWILIO_* env vars are present.
   // getConfig() (called in startServer) enforces the throw-on-missing contract
   // for the full service startup path. createApp() reads them directly here so
@@ -86,8 +109,15 @@ export function createApp(pool: Pool): Express {
       twilioVerifyService,
       identityService,
       sessionRepository,
+      jwtService,
     });
     app.use('/auth', createOtpRouter(otpService));
+  }
+
+  // AUTH-004: Sessions routes — only mounted when JwtService is available.
+  // Mirrors the TWILIO_* conditional pattern from AUTH-003.
+  if (jwtService) {
+    app.use('/auth/sessions', createSessionsRouter(jwtService, sessionRepository));
   }
 
   return app;

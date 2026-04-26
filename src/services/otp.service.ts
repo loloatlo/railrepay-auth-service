@@ -1,11 +1,11 @@
 /**
  * OtpService — auth-service
  *
- * Orchestrates: TwilioVerifyService + IdentityService + SessionRepository.
+ * Orchestrates: TwilioVerifyService + IdentityService + SessionRepository + JwtService.
  *
- * Story   : RAILREPAY-AUTH-003
+ * Story   : RAILREPAY-AUTH-003 / extended for RAILREPAY-AUTH-004
  * Phase   : US-3 (Blake — Implementation, TDD GREEN per ADR-014)
- * Date    : 2026-04-25
+ * Date    : 2026-04-25 (extended 2026-04-26 for AUTH-004 AC-D1.1)
  *
  * ADR references:
  *   ADR-002  — Structured logging with correlation IDs
@@ -70,10 +70,17 @@ export interface ISessionRepository {
   create(params: { user_id: string; channel: string }): Promise<{ session_id: string; user_id: string; channel: string; issued_at: Date; expires_at: Date; revoked_at: Date | null }>;
 }
 
+// AUTH-004: JwtService interface for dependency injection
+export interface IJwtService {
+  sign(input: { userId: string; sessionId: string }): Promise<string>;
+}
+
 export interface OtpServiceDeps {
   twilioVerifyService: ITwilioVerifyService;
   identityService: IIdentityService;
   sessionRepository: ISessionRepository;
+  /** AUTH-004: Optional JwtService — required in production, optional for unit test seam */
+  jwtService?: IJwtService;
 }
 
 // ─── Request / response shapes ────────────────────────────────────────────────
@@ -98,6 +105,10 @@ export interface VerifyOtpParams {
 export interface VerifyOtpResult {
   user_id: string;
   session_id: string;
+  /** AUTH-004 AC-D1.1: JWT access token issued on successful verification */
+  access_token: string;
+  /** AUTH-004 AC-D1.1: TTL in seconds (expires_in: 900) */
+  expires_in: number;
 }
 
 // ─── Service ─────────────────────────────────────────────────────────────────
@@ -106,11 +117,13 @@ export class OtpService {
   private readonly twilioVerifyService: ITwilioVerifyService;
   private readonly identityService: IIdentityService;
   private readonly sessionRepository: ISessionRepository;
+  private readonly jwtService?: IJwtService;
 
   constructor(deps: OtpServiceDeps) {
     this.twilioVerifyService = deps.twilioVerifyService;
     this.identityService = deps.identityService;
     this.sessionRepository = deps.sessionRepository;
+    this.jwtService = deps.jwtService;
   }
 
   /**
@@ -176,7 +189,22 @@ export class OtpService {
     const { user_id } = await this.identityService.ensureUser({ channel, phone_e164 });
     const session = await this.sessionRepository.create({ user_id, channel });
 
-    return { user_id, session_id: session.session_id };
+    // AUTH-004 AC-D1.1: mint JWT on successful OTP verify
+    // jwtService is optional for backward-compatible unit-test seam (no-op path returns empty token)
+    let access_token = '';
+    if (this.jwtService) {
+      access_token = await this.jwtService.sign({
+        userId: user_id,
+        sessionId: session.session_id,
+      });
+    }
+
+    return {
+      user_id,
+      session_id: session.session_id,
+      access_token,
+      expires_in: 900,
+    };
   }
 
   /** Map Twilio errors from startVerification to OTP error shapes */
