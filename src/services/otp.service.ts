@@ -147,6 +147,28 @@ export class OtpService {
     // Generate correlation ID if not provided (ADR-002: all Twilio calls must have tracing)
     const effectiveCorrelationId = correlationId ?? uuidv4();
 
+    // ────────────────────────────────────────────────────────────────────────
+    // TODO REMOVE BEFORE BETA LAUNCH (BL-305) — added 2026-05-27
+    // OTP_TEST_BYPASS: env-var-gated bypass for international-roaming testing.
+    // If OTP_TEST_BYPASS_CODE is set AND phone is in OTP_TEST_BYPASS_PHONES,
+    // skip the Twilio start call (no SMS sent) and return success. The matching
+    // bypass block in verifyOtp() accepts the magic code on the next request.
+    // Unsetting either env var disables the bypass instantly with no code change.
+    // ────────────────────────────────────────────────────────────────────────
+    const startBypassCode = process.env.OTP_TEST_BYPASS_CODE;
+    const startBypassPhones = (process.env.OTP_TEST_BYPASS_PHONES ?? '')
+      .split(',').map((s) => s.trim()).filter(Boolean);
+    if (startBypassCode && startBypassPhones.includes(phone_e164)) {
+      getLogger().warn('OTP_TEST_BYPASS active — skipping Twilio start (no SMS sent)', {
+        component: 'auth-service/otp',
+        correlation_id: effectiveCorrelationId,
+        phone_e164_redacted: redactPhone(phone_e164),
+        channel,
+      });
+      return { status: 'sent' };
+    }
+    // END OTP_TEST_BYPASS (BL-305)
+
     try {
       await this.twilioVerifyService.startVerification(phone_e164, effectiveCorrelationId);
       return { status: 'sent' };
@@ -165,6 +187,44 @@ export class OtpService {
    */
   async verifyOtp(params: VerifyOtpParams): Promise<VerifyOtpResult> {
     const { channel, phone_e164, code, correlationId } = params;
+
+    // ────────────────────────────────────────────────────────────────────────
+    // TODO REMOVE BEFORE BETA LAUNCH (BL-305) — added 2026-05-27
+    // OTP_TEST_BYPASS: env-var-gated bypass. All three conditions must match:
+    //   - OTP_TEST_BYPASS_CODE env var is set (the magic code)
+    //   - phone is in OTP_TEST_BYPASS_PHONES allowlist
+    //   - submitted code equals OTP_TEST_BYPASS_CODE
+    // If matched, skip Twilio entirely and follow the normal AC-2.2 success
+    // path (ensureUser + createSession + JWT). Unsetting either env var
+    // disables the bypass instantly with no code change.
+    // ────────────────────────────────────────────────────────────────────────
+    const verifyBypassCode = process.env.OTP_TEST_BYPASS_CODE;
+    const verifyBypassPhones = (process.env.OTP_TEST_BYPASS_PHONES ?? '')
+      .split(',').map((s) => s.trim()).filter(Boolean);
+    if (verifyBypassCode && verifyBypassPhones.includes(phone_e164) && code === verifyBypassCode) {
+      getLogger().warn('OTP_TEST_BYPASS used — skipping Twilio verification', {
+        component: 'auth-service/otp',
+        correlation_id: correlationId,
+        phone_e164_redacted: redactPhone(phone_e164),
+        channel,
+      });
+      const { user_id } = await this.identityService.ensureUser({ channel, phone_e164 });
+      const session = await this.sessionRepository.create({ user_id, channel });
+      let access_token = '';
+      if (this.jwtService) {
+        access_token = await this.jwtService.sign({
+          userId: user_id,
+          sessionId: session.session_id,
+        });
+      }
+      return {
+        user_id,
+        session_id: session.session_id,
+        access_token,
+        expires_in: 900,
+      };
+    }
+    // END OTP_TEST_BYPASS (BL-305)
 
     let checkResult: { valid: boolean; status: string };
     try {
